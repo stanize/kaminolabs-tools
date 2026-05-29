@@ -336,7 +336,7 @@ Set-Location $folderBrowser.SelectedPath
 
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "Qit"
-$form.Size            = New-Object System.Drawing.Size(520, 440)
+$form.Size            = New-Object System.Drawing.Size(640, 620)
 $form.StartPosition   = "CenterScreen"
 $form.BackColor       = [System.Drawing.Color]::FromArgb(18, 18, 24)
 $form.ForeColor       = [System.Drawing.Color]::FromArgb(220, 220, 220)
@@ -364,13 +364,13 @@ $lblDir.Text           = (Get-Location).Path
 $lblDir.Font           = New-Object System.Drawing.Font("Consolas", 9)
 $lblDir.ForeColor      = [System.Drawing.Color]::FromArgb(220, 220, 220)
 $lblDir.Location       = New-Object System.Drawing.Point(16, 38)
-$lblDir.Size           = New-Object System.Drawing.Size(400, 18)
+$lblDir.Size           = New-Object System.Drawing.Size(520, 18)
 $lblDir.AutoEllipsis   = $true
 $form.Controls.Add($lblDir)
 
 $btnChangeFolder       = New-Object System.Windows.Forms.Button
 $btnChangeFolder.Text  = "Change..."
-$btnChangeFolder.Location = New-Object System.Drawing.Point(420, 33)
+$btnChangeFolder.Location = New-Object System.Drawing.Point(540, 33)
 $btnChangeFolder.Size     = New-Object System.Drawing.Size(78, 24)
 $btnChangeFolder.BackColor= [System.Drawing.Color]::FromArgb(40, 40, 58)
 $btnChangeFolder.ForeColor= [System.Drawing.Color]::FromArgb(180, 180, 200)
@@ -393,14 +393,14 @@ $form.Controls.Add($lblRepoTitle)
 $lblRepo               = New-Object System.Windows.Forms.Label
 $lblRepo.Font          = New-Object System.Drawing.Font("Consolas", 9)
 $lblRepo.Location      = New-Object System.Drawing.Point(16, 84)
-$lblRepo.Size          = New-Object System.Drawing.Size(320, 18)
+$lblRepo.Size           = New-Object System.Drawing.Size(420, 18)
 $lblRepo.AutoEllipsis  = $true
 $form.Controls.Add($lblRepo)
 
 $btnLinkRepo           = New-Object System.Windows.Forms.Button
 $btnLinkRepo.Text      = "Link Repo..."
-$btnLinkRepo.Location  = New-Object System.Drawing.Point(350, 79)
-$btnLinkRepo.Size      = New-Object System.Drawing.Size(148, 24)
+$btnLinkRepo.Location = New-Object System.Drawing.Point(468, 79)
+$btnLinkRepo.Size           = New-Object System.Drawing.Size(148, 24)
 $btnLinkRepo.BackColor = [System.Drawing.Color]::FromArgb(88, 60, 160)
 $btnLinkRepo.ForeColor = [System.Drawing.Color]::White
 $btnLinkRepo.FlatStyle = "Flat"
@@ -413,7 +413,7 @@ $form.Controls.Add($btnLinkRepo)
 # Divider
 $divider               = New-Object System.Windows.Forms.Panel
 $divider.Location      = New-Object System.Drawing.Point(16, 112)
-$divider.Size          = New-Object System.Drawing.Size(480, 1)
+$divider.Size            = New-Object System.Drawing.Size(600, 1)
 $divider.BackColor     = [System.Drawing.Color]::FromArgb(45, 45, 60)
 $form.Controls.Add($divider)
 
@@ -428,7 +428,7 @@ $form.Controls.Add($lblMsgTitle)
 
 $txtMessage            = New-Object System.Windows.Forms.TextBox
 $txtMessage.Location   = New-Object System.Drawing.Point(16, 142)
-$txtMessage.Size       = New-Object System.Drawing.Size(480, 24)
+$txtMessage.Size           = New-Object System.Drawing.Size(600, 24)
 $txtMessage.BackColor  = [System.Drawing.Color]::FromArgb(30, 30, 42)
 $txtMessage.ForeColor  = [System.Drawing.Color]::FromArgb(220, 220, 220)
 $txtMessage.BorderStyle= "FixedSingle"
@@ -440,13 +440,13 @@ $lblLogTitle           = New-Object System.Windows.Forms.Label
 $lblLogTitle.Text      = "OUTPUT"
 $lblLogTitle.Font      = New-Object System.Drawing.Font("Segoe UI", 7, [System.Drawing.FontStyle]::Bold)
 $lblLogTitle.ForeColor = [System.Drawing.Color]::FromArgb(100, 120, 160)
-$lblLogTitle.Location  = New-Object System.Drawing.Point(16, 180)
+$lblLogTitle.Location  = New-Object System.Drawing.Point(16, 185)
 $lblLogTitle.AutoSize  = $true
 $form.Controls.Add($lblLogTitle)
 
 $rtbLog                = New-Object System.Windows.Forms.RichTextBox
-$rtbLog.Location       = New-Object System.Drawing.Point(16, 198)
-$rtbLog.Size           = New-Object System.Drawing.Size(480, 160)
+$rtbLog.Location       = New-Object System.Drawing.Point(16, 203)
+$rtbLog.Size          = New-Object System.Drawing.Size(600, 270)
 $rtbLog.BackColor      = [System.Drawing.Color]::FromArgb(12, 12, 18)
 $rtbLog.ForeColor      = [System.Drawing.Color]::FromArgb(180, 180, 180)
 $rtbLog.Font           = New-Object System.Drawing.Font("Consolas", 8.5)
@@ -458,7 +458,7 @@ $form.Controls.Add($rtbLog)
 # Bottom buttons
 $btnPush               = New-Object System.Windows.Forms.Button
 $btnPush.Text          = "Quick Push"
-$btnPush.Location      = New-Object System.Drawing.Point(16, 372)
+$btnPush.Location      = New-Object System.Drawing.Point(16, 545)
 $btnPush.Size          = New-Object System.Drawing.Size(120, 34)
 $btnPush.BackColor     = [System.Drawing.Color]::FromArgb(35, 134, 54)
 $btnPush.ForeColor     = [System.Drawing.Color]::White
@@ -470,7 +470,7 @@ $form.Controls.Add($btnPush)
 
 $btnClear              = New-Object System.Windows.Forms.Button
 $btnClear.Text         = "Clear Log"
-$btnClear.Location     = New-Object System.Drawing.Point(146, 372)
+$btnClear.Location     = New-Object System.Drawing.Point(146, 545)
 $btnClear.Size         = New-Object System.Drawing.Size(90, 34)
 $btnClear.BackColor    = [System.Drawing.Color]::FromArgb(40, 40, 58)
 $btnClear.ForeColor    = [System.Drawing.Color]::FromArgb(180, 180, 200)
@@ -483,7 +483,7 @@ $form.Controls.Add($btnClear)
 
 $btnResetUser          = New-Object System.Windows.Forms.Button
 $btnResetUser.Text     = "Change User"
-$btnResetUser.Location = New-Object System.Drawing.Point(246, 372)
+$btnResetUser.Location = New-Object System.Drawing.Point(246, 545)
 $btnResetUser.Size     = New-Object System.Drawing.Size(90, 34)
 $btnResetUser.BackColor= [System.Drawing.Color]::FromArgb(40, 40, 58)
 $btnResetUser.ForeColor= [System.Drawing.Color]::FromArgb(130, 130, 150)
@@ -749,6 +749,13 @@ $txtMessage.Add_KeyDown({
         $btnPush.PerformClick()
         $_.SuppressKeyPress = $true
     }
+})
+
+$form.Add_Shown({
+    $form.Activate()
+    $form.BringToFront()
+    $form.TopMost = $true
+    $form.TopMost = $false
 })
 
 $txtMessage.Select()
