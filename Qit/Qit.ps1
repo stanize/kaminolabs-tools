@@ -97,6 +97,12 @@ function Get-GitRemoteUrl {
     return $null
 }
 
+function Get-RepoName($url) {
+    if (-not $url) { return $null }
+    $name = $url -replace '.*/', '' -replace '\.git$', ''
+    return $name
+}
+
 function Is-GitRepo {
     try {
         git rev-parse --is-inside-work-tree 2>$null | Out-Null
@@ -128,7 +134,8 @@ function Refresh-RepoInfo {
     $remote2       = Get-GitRemoteUrl
 
     if ($isRepo2 -and $remote2) {
-        $lblRepo.Text        = "$remote2  [branch: $branch2]"
+        $repoName2           = Get-RepoName $remote2
+        $lblRepo.Text        = "$repoName2  /  $branch2"
         $lblRepo.ForeColor   = [System.Drawing.Color]::FromArgb(88, 166, 255)
         $btnLinkRepo.Visible = $false
         $btnPush.Enabled     = $true
