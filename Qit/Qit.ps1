@@ -676,13 +676,17 @@ $btnLinkRepo.Add_Click({
     }
     Append-Log $rtbLog "OK: Committed" ([System.Drawing.Color]::FromArgb(80,200,120))
 
-    Append-Log $rtbLog ">> git push -u origin HEAD"
-    $o = git push -u origin HEAD 2>&1
+    Append-Log $rtbLog ">> git branch -M main"
+    $o = git branch -M main 2>&1
+    Append-Log $rtbLog "OK: Branch set to main" ([System.Drawing.Color]::FromArgb(80,200,120))
+
+    Append-Log $rtbLog ">> git push -u origin main --force"
+    $o = git push -u origin main --force 2>&1
     if ($LASTEXITCODE -ne 0) {
         Append-Log $rtbLog "FAILED: git push: $o" ([System.Drawing.Color]::FromArgb(255,100,100))
         return
     }
-    Append-Log $rtbLog "SUCCESS: Folder linked and uploaded to GitHub!" ([System.Drawing.Color]::FromArgb(88,166,255))
+    Append-Log $rtbLog "SUCCESS: Folder linked and force-pushed to GitHub!" ([System.Drawing.Color]::FromArgb(88,166,255))
 
     Refresh-RepoInfo
 })
