@@ -139,17 +139,130 @@ function Refresh-RepoInfo {
         $lblRepo.ForeColor   = [System.Drawing.Color]::FromArgb(88, 166, 255)
         $btnLinkRepo.Visible = $false
         $btnPush.Enabled     = $true
+        $script:repoHasRemote = $true
+        $lblStatus.Text      = "Checking..."
+        $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
+        Start-SyncCheck
     } elseif ($isRepo2) {
         $lblRepo.Text        = "(local repo, no remote configured)"
         $lblRepo.ForeColor   = [System.Drawing.Color]::FromArgb(255, 200, 80)
         $btnLinkRepo.Visible = $true
         $btnPush.Enabled     = $false
+        $script:repoHasRemote = $false
+        $lblStatus.Text      = "Not linked -- no remote configured"
+        $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
     } else {
         $lblRepo.Text        = "Not linked -- click Link Repo to connect to GitHub"
         $lblRepo.ForeColor   = [System.Drawing.Color]::FromArgb(255, 100, 100)
         $btnLinkRepo.Visible = $true
         $btnPush.Enabled     = $false
+        $script:repoHasRemote = $false
+        $lblStatus.Text      = "Not linked -- no remote configured"
+        $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
     }
+}
+
+# ─── Sync Status ─────────────────────────────────────────────────────────────
+
+$script:syncJob       = $null
+$script:syncTimer     = $null
+$script:repoHasRemote = $false
+
+function Update-SyncUI {
+    param($result)
+    if ($null -eq $result) {
+        $lblStatus.Text           = "Status unknown"
+        $lblStatus.ForeColor      = [System.Drawing.Color]::FromArgb(130,130,150)
+        $btnRefreshStatus.Enabled = $true
+        return
+    }
+    switch ($result.state) {
+        "not-linked" {
+            $lblStatus.Text      = "Not linked -- no remote configured"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
+        }
+        "in-sync" {
+            $lblStatus.Text      = "[OK] In sync with remote"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(80,200,120)
+            if ($script:repoHasRemote) { $btnPush.Enabled = $true }
+        }
+        "ahead" {
+            $c = if ($result.ahead -eq 1) { "commit" } else { "commits" }
+            $lblStatus.Text      = "[^] Ahead by $($result.ahead) $c -- ready to push"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255,200,80)
+            if ($script:repoHasRemote) { $btnPush.Enabled = $true }
+        }
+        "behind" {
+            $c = if ($result.behind -eq 1) { "commit" } else { "commits" }
+            $lblStatus.Text      = "[v] Behind by $($result.behind) $c -- pull first"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255,100,100)
+            $btnPush.Enabled     = $false
+            Append-Log $rtbLog "WARNING: Remote has $($result.behind) unpulled $c. Pull before pushing to avoid conflicts." ([System.Drawing.Color]::FromArgb(255,150,50))
+        }
+        "diverged" {
+            $lblStatus.Text      = "[!] Diverged -- $($result.ahead) ahead, $($result.behind) behind"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(255,150,50)
+            $btnPush.Enabled     = $false
+            Append-Log $rtbLog "WARNING: Branch has diverged ($($result.ahead) ahead, $($result.behind) behind). Pull first before pushing." ([System.Drawing.Color]::FromArgb(255,150,50))
+        }
+        "error" {
+            $lblStatus.Text      = "Status unknown -- could not compare with remote"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
+        }
+        default {
+            $lblStatus.Text      = "Status unknown"
+            $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
+        }
+    }
+    $btnRefreshStatus.Enabled = $true
+}
+
+function Start-SyncCheck {
+    if ($script:syncTimer -and $script:syncTimer.Enabled) { $script:syncTimer.Stop() }
+    if ($script:syncJob) {
+        $script:syncJob | Remove-Job -Force -ErrorAction SilentlyContinue
+        $script:syncJob = $null
+    }
+    $btnRefreshStatus.Enabled = $false
+    $currentPath = (Get-Location).Path
+    $script:syncJob = Start-Job -ScriptBlock {
+        param($p)
+        Set-Location $p -ErrorAction SilentlyContinue
+        $remote = git remote get-url origin 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remote)) { return @{ state = "not-linked" } }
+        $null = git fetch origin 2>&1
+        $revList = git rev-list --count --left-right "HEAD...@{u}" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $revList = git rev-list --count --left-right "HEAD...origin/HEAD" 2>&1
+        }
+        if ($LASTEXITCODE -ne 0) { return @{ state = "error" } }
+        $out = ($revList | Where-Object { $_ -match '\S' } | Select-Object -Last 1)
+        if (-not $out) { return @{ state = "error" } }
+        $parts = $out.Trim() -split '\s+'
+        if ($parts.Count -lt 2) { return @{ state = "error" } }
+        $a = 0; $b = 0
+        [int]::TryParse($parts[0], [ref]$a) | Out-Null
+        [int]::TryParse($parts[1], [ref]$b) | Out-Null
+        if     ($a -eq 0 -and $b -eq 0) { return @{ state = "in-sync";  ahead = $a; behind = $b } }
+        elseif ($a -gt 0 -and $b -eq 0) { return @{ state = "ahead";    ahead = $a; behind = $b } }
+        elseif ($a -eq 0 -and $b -gt 0) { return @{ state = "behind";   ahead = $a; behind = $b } }
+        else                             { return @{ state = "diverged"; ahead = $a; behind = $b } }
+    } -ArgumentList $currentPath
+    if (-not $script:syncTimer) {
+        $script:syncTimer = New-Object System.Windows.Forms.Timer
+        $script:syncTimer.Interval = 500
+        $script:syncTimer.Add_Tick({
+            if ($script:syncJob -and $script:syncJob.State -ne "Running") {
+                $script:syncTimer.Stop()
+                $r = $null
+                try { $r = Receive-Job $script:syncJob -ErrorAction SilentlyContinue } catch {}
+                try { Remove-Job $script:syncJob -Force -ErrorAction SilentlyContinue } catch {}
+                $script:syncJob = $null
+                Update-SyncUI $r
+            }
+        })
+    }
+    $script:syncTimer.Start()
 }
 
 # ─── GitHub Connectivity Check ────────────────────────────────────────────────
@@ -343,7 +456,7 @@ Set-Location $folderBrowser.SelectedPath
 
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "Qit"
-$form.Size            = New-Object System.Drawing.Size(640, 620)
+$form.Size            = New-Object System.Drawing.Size(640, 660)
 $form.StartPosition   = "CenterScreen"
 $form.BackColor       = [System.Drawing.Color]::FromArgb(18, 18, 24)
 $form.ForeColor       = [System.Drawing.Color]::FromArgb(220, 220, 220)
@@ -400,14 +513,14 @@ $form.Controls.Add($lblRepoTitle)
 $lblRepo               = New-Object System.Windows.Forms.Label
 $lblRepo.Font          = New-Object System.Drawing.Font("Consolas", 9)
 $lblRepo.Location      = New-Object System.Drawing.Point(16, 84)
-$lblRepo.Size           = New-Object System.Drawing.Size(420, 18)
+$lblRepo.Size           = New-Object System.Drawing.Size(378, 18)
 $lblRepo.AutoEllipsis  = $true
 $form.Controls.Add($lblRepo)
 
 $btnLinkRepo           = New-Object System.Windows.Forms.Button
 $btnLinkRepo.Text      = "Link Repo..."
-$btnLinkRepo.Location = New-Object System.Drawing.Point(468, 79)
-$btnLinkRepo.Size           = New-Object System.Drawing.Size(148, 24)
+$btnLinkRepo.Location = New-Object System.Drawing.Point(398, 79)
+$btnLinkRepo.Size           = New-Object System.Drawing.Size(108, 24)
 $btnLinkRepo.BackColor = [System.Drawing.Color]::FromArgb(88, 60, 160)
 $btnLinkRepo.ForeColor = [System.Drawing.Color]::White
 $btnLinkRepo.FlatStyle = "Flat"
@@ -417,9 +530,52 @@ $btnLinkRepo.Cursor    = [System.Windows.Forms.Cursors]::Hand
 $btnLinkRepo.Visible   = $false
 $form.Controls.Add($btnLinkRepo)
 
+$btnCloneRepo           = New-Object System.Windows.Forms.Button
+$btnCloneRepo.Text      = "Clone Repo"
+$btnCloneRepo.Location  = New-Object System.Drawing.Point(510, 79)
+$btnCloneRepo.Size      = New-Object System.Drawing.Size(108, 24)
+$btnCloneRepo.BackColor = [System.Drawing.Color]::FromArgb(30, 100, 140)
+$btnCloneRepo.ForeColor = [System.Drawing.Color]::White
+$btnCloneRepo.FlatStyle = "Flat"
+$btnCloneRepo.FlatAppearance.BorderSize = 0
+$btnCloneRepo.Font      = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
+$btnCloneRepo.Cursor    = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($btnCloneRepo)
+
+# Status row
+$lblStatusTitle           = New-Object System.Windows.Forms.Label
+$lblStatusTitle.Text      = "STATUS"
+$lblStatusTitle.Font      = New-Object System.Drawing.Font("Segoe UI", 7, [System.Drawing.FontStyle]::Bold)
+$lblStatusTitle.ForeColor = [System.Drawing.Color]::FromArgb(100, 120, 160)
+$lblStatusTitle.Location  = New-Object System.Drawing.Point(16, 112)
+$lblStatusTitle.AutoSize  = $true
+$form.Controls.Add($lblStatusTitle)
+
+$lblStatus                = New-Object System.Windows.Forms.Label
+$lblStatus.Text           = "Checking..."
+$lblStatus.Font           = New-Object System.Drawing.Font("Consolas", 9)
+$lblStatus.ForeColor      = [System.Drawing.Color]::FromArgb(130,130,150)
+$lblStatus.Location       = New-Object System.Drawing.Point(16, 130)
+$lblStatus.Size           = New-Object System.Drawing.Size(448, 18)
+$lblStatus.AutoEllipsis   = $true
+$form.Controls.Add($lblStatus)
+
+$btnRefreshStatus                              = New-Object System.Windows.Forms.Button
+$btnRefreshStatus.Text                         = "Refresh Status"
+$btnRefreshStatus.Location                     = New-Object System.Drawing.Point(468, 125)
+$btnRefreshStatus.Size                         = New-Object System.Drawing.Size(148, 24)
+$btnRefreshStatus.BackColor                    = [System.Drawing.Color]::FromArgb(40, 40, 58)
+$btnRefreshStatus.ForeColor                    = [System.Drawing.Color]::FromArgb(180, 180, 200)
+$btnRefreshStatus.FlatStyle                    = "Flat"
+$btnRefreshStatus.FlatAppearance.BorderSize    = 1
+$btnRefreshStatus.FlatAppearance.BorderColor   = [System.Drawing.Color]::FromArgb(60, 60, 80)
+$btnRefreshStatus.Font                         = New-Object System.Drawing.Font("Segoe UI", 8)
+$btnRefreshStatus.Cursor                       = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($btnRefreshStatus)
+
 # Divider
 $divider               = New-Object System.Windows.Forms.Panel
-$divider.Location      = New-Object System.Drawing.Point(16, 112)
+$divider.Location      = New-Object System.Drawing.Point(16, 152)
 $divider.Size            = New-Object System.Drawing.Size(600, 1)
 $divider.BackColor     = [System.Drawing.Color]::FromArgb(45, 45, 60)
 $form.Controls.Add($divider)
@@ -429,12 +585,12 @@ $lblMsgTitle           = New-Object System.Windows.Forms.Label
 $lblMsgTitle.Text      = "COMMIT MESSAGE"
 $lblMsgTitle.Font      = New-Object System.Drawing.Font("Segoe UI", 7, [System.Drawing.FontStyle]::Bold)
 $lblMsgTitle.ForeColor = [System.Drawing.Color]::FromArgb(100, 120, 160)
-$lblMsgTitle.Location  = New-Object System.Drawing.Point(16, 124)
+$lblMsgTitle.Location  = New-Object System.Drawing.Point(16, 164)
 $lblMsgTitle.AutoSize  = $true
 $form.Controls.Add($lblMsgTitle)
 
 $txtMessage            = New-Object System.Windows.Forms.TextBox
-$txtMessage.Location   = New-Object System.Drawing.Point(16, 142)
+$txtMessage.Location   = New-Object System.Drawing.Point(16, 182)
 $txtMessage.Size           = New-Object System.Drawing.Size(600, 24)
 $txtMessage.BackColor  = [System.Drawing.Color]::FromArgb(30, 30, 42)
 $txtMessage.ForeColor  = [System.Drawing.Color]::FromArgb(220, 220, 220)
@@ -447,12 +603,12 @@ $lblLogTitle           = New-Object System.Windows.Forms.Label
 $lblLogTitle.Text      = "OUTPUT"
 $lblLogTitle.Font      = New-Object System.Drawing.Font("Segoe UI", 7, [System.Drawing.FontStyle]::Bold)
 $lblLogTitle.ForeColor = [System.Drawing.Color]::FromArgb(100, 120, 160)
-$lblLogTitle.Location  = New-Object System.Drawing.Point(16, 185)
+$lblLogTitle.Location  = New-Object System.Drawing.Point(16, 225)
 $lblLogTitle.AutoSize  = $true
 $form.Controls.Add($lblLogTitle)
 
 $rtbLog                = New-Object System.Windows.Forms.RichTextBox
-$rtbLog.Location       = New-Object System.Drawing.Point(16, 203)
+$rtbLog.Location       = New-Object System.Drawing.Point(16, 243)
 $rtbLog.Size          = New-Object System.Drawing.Size(600, 270)
 $rtbLog.BackColor      = [System.Drawing.Color]::FromArgb(12, 12, 18)
 $rtbLog.ForeColor      = [System.Drawing.Color]::FromArgb(180, 180, 180)
@@ -465,7 +621,7 @@ $form.Controls.Add($rtbLog)
 # Bottom buttons
 $btnPush               = New-Object System.Windows.Forms.Button
 $btnPush.Text          = "Quick Push"
-$btnPush.Location      = New-Object System.Drawing.Point(16, 545)
+$btnPush.Location      = New-Object System.Drawing.Point(16, 585)
 $btnPush.Size          = New-Object System.Drawing.Size(120, 34)
 $btnPush.BackColor     = [System.Drawing.Color]::FromArgb(35, 134, 54)
 $btnPush.ForeColor     = [System.Drawing.Color]::White
@@ -477,7 +633,7 @@ $form.Controls.Add($btnPush)
 
 $btnClear              = New-Object System.Windows.Forms.Button
 $btnClear.Text         = "Clear Log"
-$btnClear.Location     = New-Object System.Drawing.Point(146, 545)
+$btnClear.Location     = New-Object System.Drawing.Point(146, 585)
 $btnClear.Size         = New-Object System.Drawing.Size(90, 34)
 $btnClear.BackColor    = [System.Drawing.Color]::FromArgb(40, 40, 58)
 $btnClear.ForeColor    = [System.Drawing.Color]::FromArgb(180, 180, 200)
@@ -490,7 +646,7 @@ $form.Controls.Add($btnClear)
 
 $btnResetUser          = New-Object System.Windows.Forms.Button
 $btnResetUser.Text     = "Change User"
-$btnResetUser.Location = New-Object System.Drawing.Point(246, 545)
+$btnResetUser.Location = New-Object System.Drawing.Point(246, 585)
 $btnResetUser.Size     = New-Object System.Drawing.Size(90, 34)
 $btnResetUser.BackColor= [System.Drawing.Color]::FromArgb(40, 40, 58)
 $btnResetUser.ForeColor= [System.Drawing.Color]::FromArgb(130, 130, 150)
@@ -698,6 +854,210 @@ $btnLinkRepo.Add_Click({
     Refresh-RepoInfo
 })
 
+$btnCloneRepo.Add_Click({
+    $btnCloneRepo.Enabled = $false
+    $btnCloneRepo.Text    = "Loading..."
+    $form.Refresh()
+
+    $repos = Get-GitHubPublicRepos $githubUsername
+
+    $btnCloneRepo.Enabled = $true
+    $btnCloneRepo.Text    = "Clone Repo"
+
+    if ($null -eq $repos) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Could not fetch repos for user: $githubUsername`n`nCheck the username is correct.",
+            "Qit -- API Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+        return
+    }
+    if ($repos.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "No public repositories found for: $githubUsername",
+            "Qit -- No Repos",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return
+    }
+
+    # Clone picker dialog
+    $cPicker                 = New-Object System.Windows.Forms.Form
+    $cPicker.Text            = "Qit -- Clone Repo  ($githubUsername)"
+    $cPicker.Size            = New-Object System.Drawing.Size(500, 420)
+    $cPicker.StartPosition   = "CenterScreen"
+    $cPicker.BackColor       = [System.Drawing.Color]::FromArgb(18, 18, 24)
+    $cPicker.ForeColor       = [System.Drawing.Color]::FromArgb(220, 220, 220)
+    $cPicker.Font            = New-Object System.Drawing.Font("Segoe UI", 9)
+    $cPicker.FormBorderStyle = "FixedDialog"
+    $cPicker.MaximizeBox     = $false
+    $cPicker.MinimizeBox     = $false
+
+    $cLbl               = New-Object System.Windows.Forms.Label
+    $cLbl.Text          = "Select the public repo to clone  (type to filter):"
+    $cLbl.Location      = New-Object System.Drawing.Point(16, 16)
+    $cLbl.AutoSize      = $true
+    $cLbl.ForeColor     = [System.Drawing.Color]::FromArgb(180,180,200)
+    $cPicker.Controls.Add($cLbl)
+
+    $cSearch            = New-Object System.Windows.Forms.TextBox
+    $cSearch.Location   = New-Object System.Drawing.Point(16, 40)
+    $cSearch.Size       = New-Object System.Drawing.Size(460, 24)
+    $cSearch.BackColor  = [System.Drawing.Color]::FromArgb(30, 30, 42)
+    $cSearch.ForeColor  = [System.Drawing.Color]::FromArgb(220, 220, 220)
+    $cSearch.BorderStyle= "FixedSingle"
+    $cPicker.Controls.Add($cSearch)
+
+    $cList              = New-Object System.Windows.Forms.ListBox
+    $cList.Location     = New-Object System.Drawing.Point(16, 74)
+    $cList.Size         = New-Object System.Drawing.Size(460, 190)
+    $cList.BackColor    = [System.Drawing.Color]::FromArgb(24, 24, 34)
+    $cList.ForeColor    = [System.Drawing.Color]::FromArgb(220, 220, 220)
+    $cList.BorderStyle  = "FixedSingle"
+    $cList.Font         = New-Object System.Drawing.Font("Consolas", 9)
+    $cPicker.Controls.Add($cList)
+
+    $cRepoMap = @{}
+    foreach ($r in ($repos | Sort-Object { $_.updated_at } -Descending)) {
+        $cList.Items.Add($r.name) | Out-Null
+        $cRepoMap[$r.name] = $r.clone_url
+    }
+
+    $cSearch.Add_TextChanged({
+        $filter = $cSearch.Text.Trim().ToLower()
+        $cList.Items.Clear()
+        foreach ($r in ($repos | Sort-Object { $_.updated_at } -Descending)) {
+            if ($r.name.ToLower().Contains($filter)) {
+                $cList.Items.Add($r.name) | Out-Null
+            }
+        }
+        if ($cList.Items.Count -gt 0) { $cList.SelectedIndex = 0 }
+    })
+
+    $cLblDest           = New-Object System.Windows.Forms.Label
+    $cLblDest.Text      = "Destination folder:"
+    $cLblDest.Location  = New-Object System.Drawing.Point(16, 277)
+    $cLblDest.AutoSize  = $true
+    $cLblDest.ForeColor = [System.Drawing.Color]::FromArgb(100,120,160)
+    $cPicker.Controls.Add($cLblDest)
+
+    $cTxtDest           = New-Object System.Windows.Forms.TextBox
+    $cTxtDest.Location  = New-Object System.Drawing.Point(16, 296)
+    $cTxtDest.Size      = New-Object System.Drawing.Size(374, 24)
+    $cTxtDest.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 42)
+    $cTxtDest.ForeColor = [System.Drawing.Color]::FromArgb(220, 220, 220)
+    $cTxtDest.BorderStyle = "FixedSingle"
+    $cPicker.Controls.Add($cTxtDest)
+
+    $cBtnBrowse                              = New-Object System.Windows.Forms.Button
+    $cBtnBrowse.Text                         = "Browse..."
+    $cBtnBrowse.Location                     = New-Object System.Drawing.Point(394, 294)
+    $cBtnBrowse.Size                         = New-Object System.Drawing.Size(82, 26)
+    $cBtnBrowse.BackColor                    = [System.Drawing.Color]::FromArgb(40, 40, 58)
+    $cBtnBrowse.ForeColor                    = [System.Drawing.Color]::FromArgb(180, 180, 200)
+    $cBtnBrowse.FlatStyle                    = "Flat"
+    $cBtnBrowse.FlatAppearance.BorderSize    = 1
+    $cBtnBrowse.FlatAppearance.BorderColor   = [System.Drawing.Color]::FromArgb(60, 60, 80)
+    $cBtnBrowse.Font                         = New-Object System.Drawing.Font("Segoe UI", 8)
+    $cPicker.Controls.Add($cBtnBrowse)
+
+    $cBtnClone          = New-Object System.Windows.Forms.Button
+    $cBtnClone.Text     = "Clone"
+    $cBtnClone.Location = New-Object System.Drawing.Point(16, 336)
+    $cBtnClone.Size     = New-Object System.Drawing.Size(120, 34)
+    $cBtnClone.BackColor= [System.Drawing.Color]::FromArgb(30, 100, 140)
+    $cBtnClone.ForeColor= [System.Drawing.Color]::White
+    $cBtnClone.FlatStyle= "Flat"
+    $cBtnClone.FlatAppearance.BorderSize = 0
+    $cBtnClone.Font     = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+    $cBtnClone.DialogResult  = [System.Windows.Forms.DialogResult]::OK
+    $cPicker.AcceptButton    = $cBtnClone
+    $cPicker.Controls.Add($cBtnClone)
+
+    $cList.Add_SelectedIndexChanged({
+        if ($cList.SelectedItem) {
+            $repoName    = $cList.SelectedItem.ToString()
+            $currentDest = $cTxtDest.Text.Trim()
+            if ($currentDest -eq "") {
+                $cTxtDest.Text = Join-Path (Get-Location).Path $repoName
+            } else {
+                $parent = Split-Path $currentDest -Parent
+                if (-not $parent) { $parent = (Get-Location).Path }
+                $cTxtDest.Text = Join-Path $parent $repoName
+            }
+        }
+    })
+
+    $cBtnBrowse.Add_Click({
+        $fb3                     = New-Object System.Windows.Forms.FolderBrowserDialog
+        $fb3.Description         = "Choose the parent folder for the clone"
+        $fb3.ShowNewFolderButton = $true
+        $currentDest = $cTxtDest.Text.Trim()
+        if ($currentDest -ne "") {
+            $startPath = Split-Path $currentDest -Parent
+            if ($startPath -and (Test-Path $startPath)) {
+                $fb3.SelectedPath = $startPath
+            } else {
+                $fb3.SelectedPath = (Get-Location).Path
+            }
+        } else {
+            $fb3.SelectedPath = (Get-Location).Path
+        }
+        if ($fb3.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $repoName      = if ($cList.SelectedItem) { $cList.SelectedItem.ToString() } else { "" }
+            $cTxtDest.Text = Join-Path $fb3.SelectedPath $repoName
+        }
+    })
+
+    if ($cList.Items.Count -gt 0) { $cList.SelectedIndex = 0 }
+    $cSearch.Select()
+
+    if ($cPicker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    if ($null -eq $cList.SelectedItem) {
+        [System.Windows.Forms.MessageBox]::Show("Please select a repo from the list.", "Qit", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+        return
+    }
+
+    $selectedName = $cList.SelectedItem.ToString()
+    $cloneUrl     = $cRepoMap[$selectedName]
+    $destPath     = $cTxtDest.Text.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($destPath)) {
+        [System.Windows.Forms.MessageBox]::Show("Please enter a destination folder.", "Qit", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+        return
+    }
+
+    Append-Log $rtbLog "------------------------------" ([System.Drawing.Color]::FromArgb(50,50,70))
+    Append-Log $rtbLog "Cloning: $cloneUrl"
+    Append-Log $rtbLog "     to: $destPath"
+
+    # Create any missing parent directories (git clone creates the final dir itself)
+    $parentDir = Split-Path $destPath -Parent
+    if ($parentDir -and -not (Test-Path $parentDir)) {
+        try {
+            New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+            Append-Log $rtbLog "OK: Created parent directory: $parentDir" ([System.Drawing.Color]::FromArgb(80,200,120))
+        } catch {
+            Append-Log $rtbLog "FAILED: Could not create parent directory: $_" ([System.Drawing.Color]::FromArgb(255,100,100))
+            return
+        }
+    }
+
+    Append-Log $rtbLog ">> git clone $cloneUrl `"$destPath`""
+    $o = git clone $cloneUrl $destPath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Append-Log $rtbLog "FAILED: git clone: $($o -join ' ')" ([System.Drawing.Color]::FromArgb(255,100,100))
+        return
+    }
+    Append-Log $rtbLog "SUCCESS: Cloned to $destPath" ([System.Drawing.Color]::FromArgb(88,166,255))
+
+    Set-Location $destPath
+    Refresh-RepoInfo
+    Append-Log $rtbLog "Switched to: $destPath" ([System.Drawing.Color]::FromArgb(100,120,160))
+})
+
 $btnPush.Add_Click({
     $msg = $txtMessage.Text.Trim()
     if (-not (Is-GitRepo)) {
@@ -742,6 +1102,9 @@ $btnPush.Add_Click({
     $txtMessage.Clear()
     $btnPush.Enabled = $true
     $btnPush.Text    = "Quick Push"
+    $lblStatus.Text      = "Checking..."
+    $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
+    Start-SyncCheck
 })
 
 $btnClear.Add_Click({ $rtbLog.Clear() })
@@ -753,6 +1116,17 @@ $btnResetUser.Add_Click({
         $githubUsername = $newUser
         Append-Log $rtbLog "Username updated to: $newUser" ([System.Drawing.Color]::FromArgb(100,120,160))
     }
+})
+
+$btnRefreshStatus.Add_Click({
+    $lblStatus.Text      = "Checking..."
+    $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(130,130,150)
+    Start-SyncCheck
+})
+
+$form.Add_FormClosing({
+    if ($script:syncTimer) { $script:syncTimer.Stop() }
+    if ($script:syncJob)   { $script:syncJob | Remove-Job -Force -ErrorAction SilentlyContinue }
 })
 
 $txtMessage.Add_KeyDown({
